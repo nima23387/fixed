@@ -35,7 +35,6 @@ jobs:
           echo "ANDROID_HOME=$HOME/android-sdk" >> "$GITHUB_ENV"
           echo "$HOME/android-sdk/tools" >> "$GITHUB_PATH"
           echo "$HOME/android-sdk/platform-tools" >> "$GITHUB_PATH"
-
       - name: Install Android API 10
         run: |
           cd "$ANDROID_HOME"
@@ -46,19 +45,11 @@ jobs:
           test -n "$FOUND"
           cp -r "$(dirname "$FOUND")/"* platforms/android-10/
 
-      - name: Install DX
-        run: |
-          cd /tmp
-          wget -q https://dl.google.com/android/repository/build-tools_r23.0.3-linux.zip
-          unzip -q build-tools_r23.0.3-linux.zip -d /tmp/legacy-dx
-          mkdir -p "$ANDROID_HOME/build-tools/37.0.0/lib"
-          DX=$(find /tmp/legacy-dx -type f -name dx | head -n 1)
-          DXJAR=$(find /tmp/legacy-dx -type f -name dx.jar | head -n 1)
-          test -n "$DX"
-          test -n "$DXJAR"
-          cp "$DX" "$ANDROID_HOME/build-tools/37.0.0/dx"
-          cp "$DXJAR" "$ANDROID_HOME/build-tools/37.0.0/lib/dx.jar"
-          chmod +x "$ANDROID_HOME/build-tools/37.0.0/dx"
+          mkdir -p "$ANDROID_HOME/platform-tools"
+          cd "$ANDROID_HOME/platform-tools"
+          wget -q https://dl.google.com/android/repository/platform-tools-latest-linux.zip
+          unzip -qo platform-tools-latest-linux.zip
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
       - name: Extract and fix source
         run: |
