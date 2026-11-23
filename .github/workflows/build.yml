@@ -70,28 +70,32 @@ jobs:
           wget -q https://dl.google.com/android/repository/build-tools_r23.0.3-linux.zip
           unzip -q build-tools_r23.0.3-linux.zip -d /tmp/legacy-dx
 
-          DX=$(find /tmp/legacy-dx -type f -name dx | head -n 1)
-          DXJAR=$(find /tmp/legacy-dx -type f -name dx.jar | head -n 1)
+          BT=$(find /tmp/legacy-dx -type f -name aapt | head -n 1)
+          test -n "$BT"
 
-          test -n "$DX"
-          test -n "$DXJAR"
+          BT_DIR=$(dirname "$BT")
 
-          mkdir -p "$ANDROID_HOME/build-tools/23.0.3/lib"
+          mkdir -p "$ANDROID_HOME/build-tools/23.0.3"
 
-          cp "$DX" "$ANDROID_HOME/build-tools/23.0.3/dx"
-          cp "$DXJAR" "$ANDROID_HOME/build-tools/23.0.3/lib/dx.jar"
-          chmod +x "$ANDROID_HOME/build-tools/23.0.3/dx"
+          cp -r "$BT_DIR/." "$ANDROID_HOME/build-tools/23.0.3/"
 
-          cat > "$ANDROID_HOME/build-tools/23.0.3/source.properties" <<'EOF'
-          Pkg.Desc=Android SDK Build-Tools 23.0.3
-          Pkg.Revision=23.0.3
-          EOF
+          chmod -R u+rwX,go+rX "$ANDROID_HOME/build-tools/23.0.3"
 
-          touch "$ANDROID_HOME/build-tools/23.0.3/aapt"
-          touch "$ANDROID_HOME/build-tools/23.0.3/aidl"
-          touch "$ANDROID_HOME/build-tools/23.0.3/zipalign"
+          echo "=== BUILD TOOLS CHECK ==="
+          ls -l "$ANDROID_HOME/build-tools/23.0.3/aapt"
+          "$ANDROID_HOME/build-tools/23.0.3/aapt" version
 
-          echo "Build Tools directory prepared."
+      - name: Install Legacy DX
+        run: |
+          DX=$(find "$ANDROID_HOME/build-tools/23.0.3" -type f -name dx | head -n 1)
+          DXJAR=$(find "$ANDROID_HOME/build-tools/23.0.3" -type f -name dx.jar | head -n 1)
+
+          if [ -z "$DX" ] || [ -z "$DXJAR" ]; then
+            echo "ERROR: DX files not found"
+            exit 1
+          fi
+
+          chmod +x "$DX"
 
       - name: Extract and fix source
         run: |
