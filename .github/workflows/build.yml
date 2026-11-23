@@ -1,0 +1,176 @@
+
+name: Build Nima FileX APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '8'
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ant unzip wget python3
+
+      - name: Download Android SDK
+        run: |
+          mkdir -p "$HOME/android-sdk"
+          cd "$HOME/android-sdk"
+          wget -q https://dl.google.com/android/repository/tools_r25.2.5-linux.zip
+          unzip -q tools_r25.2.5-linux.zip
+          echo "ANDROID_HOME=$HOME/android-sdk" >> "$GITHUB_ENV"
+          echo "$HOME/android-sdk/tools" >> "$GITHUB_PATH"
+          echo "$HOME/android-sdk/platform-tools" >> "$GITHUB_PATH"
+
+      - name: Install Android API 10
+        run: |
+          cd "$ANDROID_HOME"
+          mkdir -p platforms/android-10
+          wget -q https://dl.google.com/android/repository/android-2.3.3_r02.zip
+          unzip -q android-2.3.3_r02.zip -d /tmp/android-api
+          FOUND=$(find /tmp/android-api -type f -name android.jar | head -n 1)
+          test -n "$FOUND"
+          cp -r "$(dirname "$FOUND")/"* platforms/android-10/
+
+      - name: Install DX
+        run: |
+          cd /tmp
+          wget -q https://dl.google.com/android/repository/build-tools_r23.0.3-linux.zip
+          unzip -q build-tools_r23.0.3-linux.zip -d /tmp/legacy-dx
+          mkdir -p "$ANDROID_HOME/build-tools/37.0.0/lib"
+          DX=$(find /tmp/legacy-dx -type f -name dx | head -n 1)
+          DXJAR=$(find /tmp/legacy-dx -type f -name dx.jar | head -n 1)
+          test -n "$DX"
+          test -n "$DXJAR"
+          cp "$DX" "$ANDROID_HOME/build-tools/37.0.0/dx"
+          cp "$DXJAR" "$ANDROID_HOME/build-tools/37.0.0/lib/dx.jar"
+          chmod +x "$ANDROID_HOME/build-tools/37.0.0/dx"
+
+      - name: Extract and fix source
+        run: |
+          python3 - <<'PY'
+          import zipfile
+          import re
+          from pathlib import Path
+
+          archives = list(Path(".").glob("*.zip"))
+          if not archives:
+              raise SystemExit("ERROR: Source ZIP not found.")
+
+          for archive in archives:
+              print("Extracting:", archive.name)
+              with zipfile.ZipFile(archive) as z:
+                  for info in z.infolist():
+                      name = info.filename.replace("\\", "/")
+                      if name.startswith("/") or ".." in Path(name).parts:
+                          continue
+                      target = Path("project") / name
+                      if info.is_dir():
+                          target.mkdir(parents=True, exist_ok=True)
+                      else:
+                          target.parent.mkdir(parents=True, exist_ok=True)
+                          target.write_bytes(z.read(info))
+
+          manifests = list(Path("project").rglob("AndroidManifest.xml"))
+          projects = [
+              p.parent for p in manifests
+              if (p.parent / "build.xml").is_file()
+          ]
+
+          if len(projects) != 1:
+              raise SystemExit(
+                  "ERROR: Expected one Android project, found "
+                  + str(len(projects))
+              )
+
+          project_dir = projects[0]
+          java_files = list(project_dir.rglob("*.java"))
+
+          if not java_files:
+              raise SystemExit("ERROR: No Java source files found.")
+
+          for java_file in java_files:
+              source = java_file.read_text(encoding="utf-8")
+
+              source = re.sub(
+                  r'(?m)^\s*import\s+android\.content\.DialogInterface\s*;\s*\n?',
+                  '',
+                  source
+              )
+
+              source = re.sub(
+                  r'\bDialogInterface\b',
+                  'android.content.DialogInterface',
+                  source
+              )
+
+              java_file.write_text(source, encoding="utf-8")
+
+          print("Fixed DialogInterface references.")
+          print("Project:", project_dir)
+
+          with open("project_dir.txt", "w") as f:
+              f.write(str(project_dir))
+          PY
+
+          echo "PROJECT_DIR=$(cat project_dir.txt)" >> "$GITHUB_ENV"
+
+      
+      - name: Build APK
+        run: |
+          cd "$PROJECT_DIR"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          files = list(Path("src").rglob("*.java"))
+
+          if not files:
+              raise SystemExit("ERROR: No Java files found.")
+
+          for file in files:
+              source = file.read_text(encoding="utf-8")
+              source = re.sub(
+                  r'(?<![\w.])DialogInterface\b',
+                  'android.content.DialogInterface',
+                  source
+              )
+              file.write_text(source, encoding="utf-8")
+
+          print("=== VERIFYING FIX ===")
+
+          for file in files:
+              for line_number, line in enumerate(
+                  file.read_text(encoding="utf-8").splitlines(), 1
+              ):
+                  if "DialogInterface" in line:
+                      print(f"{file}:{line_number}: {line.strip()}")
+
+          print("=== FIX APPLIED ===")
+          PY
+
+          ant debug
+
+
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nima-FileX-APK
+          path: project/**/bin/*-debug.apk
+          if-no-files-found: error
