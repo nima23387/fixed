@@ -30,26 +30,68 @@ jobs:
         run: |
           mkdir -p "$HOME/android-sdk"
           cd "$HOME/android-sdk"
+
           wget -q https://dl.google.com/android/repository/tools_r25.2.5-linux.zip
           unzip -q tools_r25.2.5-linux.zip
+
           echo "ANDROID_HOME=$HOME/android-sdk" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> "$GITHUB_ENV"
           echo "$HOME/android-sdk/tools" >> "$GITHUB_PATH"
           echo "$HOME/android-sdk/platform-tools" >> "$GITHUB_PATH"
+
       - name: Install Android API 10
         run: |
           cd "$ANDROID_HOME"
+
           mkdir -p platforms/android-10
+
           wget -q https://dl.google.com/android/repository/android-2.3.3_r02.zip
           unzip -q android-2.3.3_r02.zip -d /tmp/android-api
+
           FOUND=$(find /tmp/android-api -type f -name android.jar | head -n 1)
           test -n "$FOUND"
+
           cp -r "$(dirname "$FOUND")/"* platforms/android-10/
 
+      - name: Install Platform Tools
+        run: |
           mkdir -p "$ANDROID_HOME/platform-tools"
           cd "$ANDROID_HOME/platform-tools"
+
           wget -q https://dl.google.com/android/repository/platform-tools-latest-linux.zip
           unzip -qo platform-tools-latest-linux.zip
+
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+
+      - name: Install Build Tools
+        run: |
+          cd /tmp
+
+          wget -q https://dl.google.com/android/repository/build-tools_r23.0.3-linux.zip
+          unzip -q build-tools_r23.0.3-linux.zip -d /tmp/legacy-dx
+
+          DX=$(find /tmp/legacy-dx -type f -name dx | head -n 1)
+          DXJAR=$(find /tmp/legacy-dx -type f -name dx.jar | head -n 1)
+
+          test -n "$DX"
+          test -n "$DXJAR"
+
+          mkdir -p "$ANDROID_HOME/build-tools/23.0.3/lib"
+
+          cp "$DX" "$ANDROID_HOME/build-tools/23.0.3/dx"
+          cp "$DXJAR" "$ANDROID_HOME/build-tools/23.0.3/lib/dx.jar"
+          chmod +x "$ANDROID_HOME/build-tools/23.0.3/dx"
+
+          cat > "$ANDROID_HOME/build-tools/23.0.3/source.properties" <<'EOF'
+          Pkg.Desc=Android SDK Build-Tools 23.0.3
+          Pkg.Revision=23.0.3
+          EOF
+
+          touch "$ANDROID_HOME/build-tools/23.0.3/aapt"
+          touch "$ANDROID_HOME/build-tools/23.0.3/aidl"
+          touch "$ANDROID_HOME/build-tools/23.0.3/zipalign"
+
+          echo "Build Tools directory prepared."
 
       - name: Extract and fix source
         run: |
@@ -59,17 +101,22 @@ jobs:
           from pathlib import Path
 
           archives = list(Path(".").glob("*.zip"))
+
           if not archives:
               raise SystemExit("ERROR: Source ZIP not found.")
 
           for archive in archives:
               print("Extracting:", archive.name)
+
               with zipfile.ZipFile(archive) as z:
                   for info in z.infolist():
                       name = info.filename.replace("\\", "/")
+
                       if name.startswith("/") or ".." in Path(name).parts:
                           continue
+
                       target = Path("project") / name
+
                       if info.is_dir():
                           target.mkdir(parents=True, exist_ok=True)
                       else:
@@ -77,6 +124,7 @@ jobs:
                           target.write_bytes(z.read(info))
 
           manifests = list(Path("project").rglob("AndroidManifest.xml"))
+
           projects = [
               p.parent for p in manifests
               if (p.parent / "build.xml").is_file()
@@ -92,7 +140,7 @@ jobs:
           java_files = list(project_dir.rglob("*.java"))
 
           if not java_files:
-              raise SystemExit("ERROR: No Java source files found.")
+              raise SystemExit("ERROR: No Java files found.")
 
           for java_file in java_files:
               source = java_file.read_text(encoding="utf-8")
@@ -111,7 +159,7 @@ jobs:
 
               java_file.write_text(source, encoding="utf-8")
 
-          print("Fixed DialogInterface references.")
+          print("DialogInterface fix applied.")
           print("Project:", project_dir)
 
           with open("project_dir.txt", "w") as f:
@@ -120,44 +168,19 @@ jobs:
 
           echo "PROJECT_DIR=$(cat project_dir.txt)" >> "$GITHUB_ENV"
 
-      
       - name: Build APK
         run: |
+          set -e
+
           cd "$PROJECT_DIR"
 
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          files = list(Path("src").rglob("*.java"))
-
-          if not files:
-              raise SystemExit("ERROR: No Java files found.")
-
-          for file in files:
-              source = file.read_text(encoding="utf-8")
-              source = re.sub(
-                  r'(?<![\w.])DialogInterface\b',
-                  'android.content.DialogInterface',
-                  source
-              )
-              file.write_text(source, encoding="utf-8")
-
-          print("=== VERIFYING FIX ===")
-
-          for file in files:
-              for line_number, line in enumerate(
-                  file.read_text(encoding="utf-8").splitlines(), 1
-              ):
-                  if "DialogInterface" in line:
-                      print(f"{file}:{line_number}: {line.strip()}")
-
-          print("=== FIX APPLIED ===")
-          PY
           echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+          echo "=== VERIFYING JAVA SOURCE ==="
+          grep -RIn --include="*.java" "DialogInterface" src
+
+          echo "=== BUILDING APK ==="
           ant debug
-
-
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
