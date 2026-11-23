@@ -163,7 +163,7 @@ jobs:
 
           print("=== FIX APPLIED ===")
           PY
-
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
           ant debug
 
 
